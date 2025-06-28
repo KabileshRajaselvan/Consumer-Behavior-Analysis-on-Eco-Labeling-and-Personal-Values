@@ -1,0 +1,301 @@
+import pandas as pd
+
+sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTCZtIPfCbt1fjTnNtRd-Sr5foDv1rP-ijWH0W-U_G4ySfX8nWRDFGJU2QQElcftadS-EDlHdxX-cyw/pub?output=csv"
+df = pd.read_csv(sheet_url)
+print(df.columns.tolist())
+import seaborn as sns
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+
+df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_").str.replace("'", "").str.replace("(", "").str.replace(")", "")
+
+personal_values_cols = [
+    'i_often_actively_seek_information_about_environmental_issues.',
+    'i_believe_climate_change_is_a_significant_global_problem.',
+    'i_am_aware_of_sustainable_consumption_and_its_impact_on_the_environment.',
+    'i_try_to_reduce_my_carbon_footprint_by_making_eco-friendly_choices.',
+    'i_regularly_engage_in_activities_such_as_recycling,_reducing_waste,_and_conserving_energy.',
+    'i_feel_a_strong_responsibility_to_help_future_generations_by_protecting_the_environment.',
+    'i_consider_others_well-being_when_making_purchasing_decisions.',
+    'i_am_willing_to_make_sacrifices_e.g.,_paying_more,_reducing_consumption_for_environmental_sustainability.',
+    'i_actively_seek_information_about_the_environmental_impact_of_products.',
+    'i_try_to_minimize_my_negative_impact_on_the_environment_through_my_purchases.',
+    'i_encourage_others_to_buy_eco-friendly_products.',
+    'it_is_my_duty_to_contribute_to_a_sustainable_environment.',
+    'my_purchasing_decisions_can_make_a_difference_in_environmental_conservation.',
+    'everyone_should_take_responsibility_for_their_environmental_impact.'
+]
+
+
+df['personal_values_score'] = df[personal_values_cols].mean(axis=1)
+
+# Create Eco-Labeling Composite Score
+eco_labeling_cols = [
+    'i_trust_eco-labels_to_accurately_represent_sustainable_products.',
+    'i_believe_companies_genuinely_follow_sustainable_practices_when_they_use_eco-labels.',
+    'eco-labels_are_regulated_and_monitored_by_reliable_authorities.',
+    'i_easily_recognize_eco-labels_on_products.',
+    'i_notice_eco-labels_when_making_purchase_decisions.',
+    'i_have_seen_an_increase_in_eco-labeling_on_products_over_the_past_few_years.',
+    'eco-labels_clearly_convey_the_environmental_benefits_of_a_product.',
+    'i_understand_the_information_presented_in_eco-labels.',
+    'there_should_be_standardized_eco-labeling_guidelines_for_better_consumer_understanding.'
+]
+
+df['eco_labeling_score'] = df[eco_labeling_cols].mean(axis=1)
+
+# WTP
+# Mapping WTP text to numeric values
+wtp_mapping = {
+    "0% (I wouldn't pay extra)": 0,
+    "Up to 5% more": 2.5,
+    "5% - 10% more": 7.5,
+    "10% - 20% more": 15,
+    "More than 20%": 25
+}
+
+raw_col = 'how_much_more_would_you_be_willing_to_pay_for_a_sustainable_version_of_a_product_compared_to_a_non-sustainable_alternative?'
+
+# Apply mapping
+df['wtp'] = df[raw_col].map(wtp_mapping)
+
+# Drop rows with missing values
+df = df.dropna(subset=['wtp'])
+
+# Ensure other scores are numeric
+df['personal_values_score'] = pd.to_numeric(df['personal_values_score'], errors='coerce')
+df['eco_labeling_score'] = pd.to_numeric(df['eco_labeling_score'], errors='coerce')
+
+# Recalculate interaction term
+df['interaction_term'] = df['personal_values_score'] * df['eco_labeling_score']
+
+# Drop any remaining NaN rows
+df = df.dropna(subset=['personal_values_score', 'eco_labeling_score', 'wtp', 'interaction_term'])
+
+# Regression
+import statsmodels.api as sm
+X = df[['personal_values_score', 'eco_labeling_score', 'interaction_term']]
+X = sm.add_constant(X)
+y = df['wtp']
+
+model = sm.OLS(y, X).fit()
+print(model.summary())
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+sns.scatterplot(data=df, x='personal_values_score', y='wtp', hue='eco_labeling_score', palette='coolwarm')
+plt.title('Interaction: Personal Values × Eco-Labeling vs WTP')
+plt.xlabel('Personal Values Score')
+plt.ylabel('WTP (%)')
+plt.legend(title='Eco-Labeling Score')
+plt.tight_layout()
+plt.show()
+# Create a binary WTP class
+def classify_wtp(wtp):
+    if wtp >= 15:
+        return 1  # High WTP
+    else:
+        return 0  # Low WTP
+
+df['wtp_class'] = df['wtp'].apply(classify_wtp)
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Features and Target
+X = df[['personal_values_score', 'eco_labeling_score']]
+X['interaction'] = X['personal_values_score'] * X['eco_labeling_score']
+y = df['wtp_class']
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Model
+log_model = LogisticRegression()
+log_model.fit(X_train, y_train)
+
+# Predictions
+y_pred = log_model.predict(X_test)
+
+# Evaluation
+print("Confusion Matrix:\n", confusion_matrix(y_test, y_pred))
+print("\nClassification Report:\n", classification_report(y_test, y_pred))
+
+# Visualization
+sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt="d", cmap="Blues")
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
+from sklearn.metrics import roc_curve, roc_auc_score
+
+# Predict probabilities for class 1
+y_proba = log_model.predict_proba(X_test)[:, 1]
+
+# ROC and AUC
+fpr, tpr, thresholds = roc_curve(y_test, y_proba)
+auc_score = roc_auc_score(y_test, y_proba)
+
+# Plot ROC
+plt.figure(figsize=(6, 4))
+plt.plot(fpr, tpr, label=f"AUC = {auc_score:.2f}")
+plt.plot([0, 1], [0, 1], linestyle='--', color='gray')
+plt.title("ROC Curve")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.legend()
+plt.tight_layout()
+plt.show()
+from sklearn.model_selection import cross_val_score
+
+# Logistic Regression with 5-fold cross-validation
+cv_scores = cross_val_score(log_model, X, y, cv=5, scoring='accuracy')
+print("Cross-Validation Accuracy Scores:", cv_scores)
+print("Average CV Accuracy:", cv_scores.mean())
+# Extract feature importance
+feature_names = X.columns
+importance = log_model.coef_[0]
+
+for name, coef in zip(feature_names, importance):
+    print(f"{name}: {coef:.4f}")
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTCZtIPfCbt1fjTnNtRd-Sr5foDv1rP-ijWH0W-U_G4ySfX8nWRDFGJU2QQElcftadS-EDlHdxX-cyw/pub?output=csv"
+df = pd.read_csv(sheet_url)
+
+# ----------------------------
+# 1. Feature Engineering
+# ----------------------------
+personal_value_cols = [
+    'I often actively seek information about environmental issues.',
+    'I believe climate change is a significant global problem. ',
+    'I am aware of sustainable consumption and its impact on the environment. ',
+    'I try to reduce my carbon footprint by making eco-friendly choices. ',
+    'I regularly engage in activities such as recycling, reducing waste, and conserving energy. ',
+    'I feel a strong responsibility to help future generations by protecting the environment.  ',
+    "I consider others' well-being when making purchasing decisions. ",
+    'I am willing to make sacrifices (e.g., paying more, reducing consumption) for environmental sustainability. ',
+    'I actively seek information about the environmental impact of products. ',
+    'I try to minimize my negative impact on the environment through my purchases. ',
+    'I encourage others to buy eco-friendly products. ',
+    'It is my duty to contribute to a sustainable environment. ',
+    'My purchasing decisions can make a difference in environmental conservation. ',
+    'Everyone should take responsibility for their environmental impact. '
+]
+
+eco_label_cols = [
+    'I trust eco-labels to accurately represent sustainable products.  ',
+    'I believe companies genuinely follow sustainable practices when they use eco-labels. ',
+    'Eco-labels are regulated and monitored by reliable authorities. ',
+    'I easily recognize eco-labels on products. ',
+    'I notice eco-labels when making purchase decisions. ',
+    'I have seen an increase in eco-labeling on products over the past few years. ',
+    'Eco-labels clearly convey the environmental benefits of a product. ',
+    'I understand the information presented in eco-labels. ',
+    'There should be standardized eco-labeling guidelines for better consumer understanding. '
+]
+
+wtp_cols = [
+    'I am willing to pay a higher price for eco-friendly products compared to regular alternatives.  ',
+    'The price difference between sustainable and non-sustainable products influences my decision to purchase.  ',
+    'I would choose an eco-friendly product even if it costs significantly more.  '
+]
+
+# Convert all to numeric
+df[personal_value_cols + eco_label_cols + wtp_cols] = df[personal_value_cols + eco_label_cols + wtp_cols].apply(pd.to_numeric, errors='coerce')
+
+# Create composite scores
+df['personal_value_score'] = df[personal_value_cols].mean(axis=1)
+df['eco_label_score'] = df[eco_label_cols].mean(axis=1)
+df['WTP_score'] = df[wtp_cols].mean(axis=1)
+
+df_clean = df.dropna(subset=['personal_value_score', 'eco_label_score', 'WTP_score'])
+
+# ----------------------------
+# 2. Model & Evaluation
+# ----------------------------
+X = df_clean[['personal_value_score', 'eco_label_score']]
+y = df_clean['WTP_score']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = RandomForestRegressor(random_state=42)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+
+print("Model R²:", r2_score(y_test, y_pred))
+print("Model RMSE:", mean_squared_error(y_test, y_pred, squared=False))
+
+# ----------------------------
+# 3. Cluster Consumers
+# ----------------------------
+kmeans = KMeans(n_clusters=3, random_state=42)
+df_clean['cluster'] = kmeans.fit_predict(df_clean[['personal_value_score', 'eco_label_score']])
+
+# ----------------------------
+# 4. Marketing Personas
+# ----------------------------
+persona_names = {
+    0: 'Eco-Aware Advocates',
+    1: 'Balanced Buyers',
+    2: 'Cost-Conscious Skeptics'
+}
+df_clean['persona'] = df_clean['cluster'].map(persona_names)
+
+persona_summary = df_clean.groupby('persona')[['personal_value_score', 'eco_label_score', 'WTP_score']].mean()
+persona_summary['count'] = df_clean['persona'].value_counts()
+print("\nPersona Summary:")
+print(persona_summary)
+
+# Optional: Plot clusters
+sns.scatterplot(data=df_clean, x='personal_value_score', y='eco_label_score', hue='persona', palette='Set2')
+plt.title("Consumer Personas Based on Values and Eco-Labeling")
+plt.show()
+# Personal Value Score Distribution
+sns.histplot(df_clean['personal_value_score'], kde=True, color='green')
+plt.title("Distribution of Personal Value Scores")
+plt.xlabel("Personal Value Score")
+plt.ylabel("Frequency")
+plt.show()
+
+# Eco Label Score Distribution
+sns.histplot(df_clean['eco_label_score'], kde=True, color='blue')
+plt.title("Distribution of Eco-Label Scores")
+plt.xlabel("Eco-Label Score")
+plt.ylabel("Frequency")
+plt.show()
+
+# WTP Score Distribution
+sns.histplot(df_clean['WTP_score'], kde=True, color='orange')
+plt.title("Distribution of Willingness to Pay Scores")
+plt.xlabel("WTP Score")
+plt.ylabel("Frequency")
+plt.show()
+# Correlation matrix
+corr = df_clean[['personal_value_score', 'eco_label_score', 'WTP_score']].corr()
+sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
+plt.title("Correlation Matrix")
+plt.show()
+# Boxplots of composite scores per persona
+for score in ['personal_value_score', 'eco_label_score', 'WTP_score']:
+    sns.boxplot(x='persona', y=score, data=df_clean, palette='Set3')
+    plt.title(f"{score.replace('_', ' ').title()} by Persona")
+    plt.xticks(rotation=15)
+    plt.ylabel(score.replace('_', ' ').title())
+    plt.show()
+sns.pairplot(df_clean[['personal_value_score', 'eco_label_score', 'WTP_score', 'persona']], hue='persona', palette='Set2')
+plt.suptitle("Pairplot of Composite Scores by Persona", y=1.02)
+plt.show()
+sns.countplot(data=df_clean, x='persona', palette='Set2')
+plt.title("Number of Consumers in Each Persona Group")
+plt.xlabel("Persona")
+plt.ylabel("Count")
+plt.show()
